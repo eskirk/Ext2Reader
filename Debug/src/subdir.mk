@@ -4,13 +4,16 @@
 
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
-../src/Ext2Reader.c 
+../src/Ext2Reader.c \
+../src/ext2.c 
 
 OBJS += \
-./src/Ext2Reader.o 
+./src/Ext2Reader.o \
+./src/ext2.o 
 
 C_DEPS += \
-./src/Ext2Reader.d 
+./src/Ext2Reader.d \
+./src/ext2.d 
 
 
 # Each subdirectory must supply rules for building sources it contributes
