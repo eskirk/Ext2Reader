@@ -41,7 +41,7 @@ typedef unsigned char uint8_t;
 /*
  * Structure of a blocks group descriptor
  */
-struct ext2_group_desc {
+typedef struct ext2_group_desc {
    uint32_t bg_block_bitmap; /* Blocks bitmap block */
    uint32_t bg_inode_bitmap; /* Inodes bitmap block */
    uint32_t bg_inode_table; /* Inodes table block */
@@ -50,7 +50,7 @@ struct ext2_group_desc {
    uint16_t bg_used_dirs_count; /* Directories count */
    uint16_t bg_pad;
    uint32_t bg_reserved[3];
-};
+} ext2_group_desc;
 
 /*
  * Constants relative to the data blocks
@@ -64,7 +64,7 @@ struct ext2_group_desc {
 /*
  * Structure of an inode on the disk
  */
-struct ext2_inode {
+typedef struct ext2_inode {
    uint16_t i_mode; /* File mode */
    uint16_t i_uid; /* Low 16 bits of Owner Uid */
    uint32_t i_size; /* Size in bytes */
@@ -116,12 +116,12 @@ struct ext2_inode {
          uint32_t m_i_reserved2[2];
       } masix2;
    } osd2; /* OS dependent 2 */
-};
+} ext2_inode;
 
 /*
  * Structure of the super block
  */
-struct ext2_super_block {
+typedef struct ext2_super_block {
    uint32_t s_inodes_count; /* Inodes count */
    uint32_t s_blocks_count; /* Blocks count */
    uint32_t s_r_blocks_count; /* Reserved blocks count */
@@ -147,7 +147,7 @@ struct ext2_super_block {
    uint32_t s_rev_level; /* Revision level */
    uint16_t s_def_resuid; /* Default uid for reserved blocks */
    uint16_t s_def_resgid; /* Default gid for reserved blocks */
-};
+} ext2_super_block;
 
 /*
  * Revision levels
@@ -160,12 +160,12 @@ struct ext2_super_block {
  * Structure of a directory entry
  */
 
-struct ext2_dir_entry {
+typedef struct ext2_dir_entry {
    uint32_t inode; /* Inode number */
    uint16_t rec_len; /* Directory entry length */
    uint16_t name_len; /* Name length */
    char name[]; /* File name, up to EXT2_NAME_LEN */
-};
+} ext2_dir_entry;
 
 /*
  * Ext2 directory file types.  Only the low 3 bits are used.  The
