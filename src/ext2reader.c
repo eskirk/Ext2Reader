@@ -64,7 +64,7 @@ int main(int argc, char **argv) {
 }
 
 void print_error_msg_and_exit(int exit_value) {
-   printf("\nUsage: \n"
+   fprintf(stderr, "\nUsage: \n"
          "     ext2reader <image.ext2> [path]\n"
          "     ext2reader -l <image.ext2> <file_to_dump.txt>\n"
          "\n     If [path] is not specified, '/' will be used"
@@ -79,20 +79,37 @@ void list_entries(char *image, char *dir) {
 
    fp = fopen(image, "r");
    if (!fp) {
-      printf("Could not find file %s\n", image);
+      fprintf(stderr, "Could not find file %s\n", image);
       exit(1);
    }
 
+   // superblock
    ext2_super_block *sb = malloc(BLOCK_SIZE);
    read_data(2, 0, sb, BLOCK_SIZE);
 
-   printf("inodes count: %d\n", sb->s_inodes_count);
-   printf("blocks count: %d\n", sb->s_blocks_count);
-   printf("reserved blocks count: %d\n", sb->s_r_blocks_count);
-   printf("free inodes count: %d\n", sb->s_free_inodes_count);
-   printf("free blocks count: %d\n", sb->s_free_blocks_count);
+   printf("blocks per group: %d\n", sb->s_blocks_per_group);
+   printf("block size: 1024 << %d\n", sb->s_log_block_size);
+   printf("inodes per group: %d\n", sb->s_inodes_per_group);
+
+   // block group descriptor table
+   ext2_group_desc *bgd = malloc(BLOCK_SIZE);
+   read_data(4, 0, bgd, BLOCK_SIZE);
+   printf("block id of block bitmap: %d\n", bgd->bg_block_bitmap);
+   printf("block id of inode bitmap: %d\n", bgd->bg_inode_bitmap);
+   printf("block id of inode table: %d\n", bgd->bg_inode_table);
+   printf("free inodes count: %d\n", bgd->bg_free_inodes_count);
+
+   // inode bitmap
+   uint8_t *inode_bitmap = malloc(BLOCK_SIZE);
+   read_data(bgd->bg_inode_bitmap * 2, 0, inode_bitmap, BLOCK_SIZE);
+
+   int i;
+   for (i = 0; i < BLOCK_SIZE; i++)
+      printf("inode_bitmap[%d]: 0x%02X\n", i, inode_bitmap[i]);
 
    // teardown
+   free(inode_bitmap);
+   free(bgd);
    free(sb);
    fclose(fp);
 }
