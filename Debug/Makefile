@@ -1,5 +1,5 @@
 CC=gcc
-FLAGS=-g
+FLAGS=-g -w
 FILES=../src/ext2.c ../src/ext2reader.c 
 OBJ=ext2.o ext2reader.o 
 OUT=ext2reader
