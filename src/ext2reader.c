@@ -20,6 +20,10 @@
 #define ARG_COUNT_MAX 3
 #define BLOCK_SIZE 1024
 #define INODE_SIZE sizeof(ext2_inode)
+#define IS_DIR 14
+#define TO_BGDT 2
+#define TO_INODE_BITMAP 6
+#define TO_INODE_TABLE 8
 
 void print_error_msg_and_exit(int exit_value);
 void list_entries(char *image, char *dir);
@@ -113,25 +117,30 @@ void list_entries(char *image, char *dir) {
       if (block_group != old_block_group) {
          int curr_bg_idx = 2 * (1 + sb->s_blocks_per_group * block_group);
 
-         read_data(curr_bg_idx + 2, 0, bgdt, BLOCK_SIZE);
-         read_data(curr_bg_idx + 6, 0, inode_bitmap, BLOCK_SIZE);
-         read_data(curr_bg_idx + 8, 0, inode_table,
+         read_data(curr_bg_idx + TO_BGDT, 0, bgdt, BLOCK_SIZE);
+         read_data(curr_bg_idx + TO_INODE_BITMAP, 0, inode_bitmap, BLOCK_SIZE);
+         read_data(curr_bg_idx + TO_INODE_TABLE, 0, inode_table,
                sb->s_inodes_per_group * INODE_SIZE);
          shift = 0;
-
-         printf("\n\nblock group %d\n", block_group);
       }
 
       shift %= 8;
       if (inode_bitmap[local_inode_index / 8] >> shift & 1) { // if inode in use
-         printf("index: %d, mode: 0x%04X", local_inode_index,
-               inode_table[local_inode_index].i_mode);
+         if (inode_table[local_inode_index].i_mode >> IS_DIR & 1) {  // if dir
+            if (block_group == 0 && local_inode_index == 1) {  // root dir
 
-         if (inode_table[local_inode_index].i_mode >> 14 & 1)
-            printf(" is a directory\n");
-         else
-            printf("\n");
+               // TODO parse the root directory and display its contents
+               ext2_dir_entry *block_ptr1 =
+                     (ext2_dir_entry *) inode_table[local_inode_index].i_block[0];
+               printf("block_ptr1: %d\n", block_ptr1);
+               // printf("block_ptr1 inode: %d\n", block_ptr1->inode);
+               // printf("block_ptr1 name: %d\n", block_ptr1->name);
+               // printf("block_ptr1 name len: %d\n", block_ptr1->name_len);
+
+            }
+         }
       }
+
    }
 
    // teardown
