@@ -129,13 +129,25 @@ void list_entries(char *image, char *dir) {
          if (inode_table[local_inode_index].i_mode >> IS_DIR & 1) {  // if dir
             if (block_group == 0 && local_inode_index == 1) {  // root dir
 
-               // TODO parse the root directory and display its contents
-               ext2_dir_entry *block_ptr1 =
-                     (ext2_dir_entry *) inode_table[local_inode_index].i_block[0];
-               printf("block_ptr1: %d\n", block_ptr1);
-               // printf("block_ptr1 inode: %d\n", block_ptr1->inode);
-               // printf("block_ptr1 name: %d\n", block_ptr1->name);
-               // printf("block_ptr1 name len: %d\n", block_ptr1->name_len);
+            // TODO parse the root directory and display its contents
+               printf("block_ptr1: %d\n",
+                     inode_table[local_inode_index].i_block[0]);
+
+               ext2_dir_entry *dentry = malloc(BLOCK_SIZE);
+               read_data(inode_table[local_inode_index].i_block[0] * 2, 0, dentry,
+               BLOCK_SIZE);
+
+               ext2_dir_entry *dentry_next = dentry;
+               while (dentry_next->inode) {
+                  int c_idx;
+
+                  printf("name: ");
+                  for (c_idx = 0; c_idx < dentry_next->name_len; c_idx++)
+                     printf("%c", dentry_next->name[c_idx]);
+                  printf("\n");
+
+                  dentry_next = ((char *)dentry_next) + dentry_next->rec_len;
+               }
 
             }
          }
