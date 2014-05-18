@@ -36,7 +36,8 @@ void print_error_msg_and_exit(int exit_value);
 
 /*
  * Finds the directory specified by |dir| inside ext2 filesystem |image|
- * and returns the ext2_dir_entry at the beginning of the list
+ * and returns the ext2_dir_entry at the beginning of the list. Client is
+ * responsible for freeing the dynamically allocated ext2_dir_entry.
  */
 ext2_dir_entry *find_dir(FILE *image, char *dir);
 
@@ -60,32 +61,34 @@ void dump_file(ext2_dir_entry *dir, char *file_dump);
  */
 static void parse_blocks_recurs(uint32_t *blocks, char *opt) {
    int i, j, k;
-   char *data = malloc(BLOCK_SIZE);
+   char data[BLOCK_SIZE];
 
    if (!strcmp(opt, "d")) {
-      for (i = 0; i < 12; i++) {
+      for (i = 0; blocks[i] && i < 12; i++) {
          read_data(blocks[i] * 2, 0, data, BLOCK_SIZE);
          for (j = 0; data[j] && j < BLOCK_SIZE; j++)
             printf("%c", data[j]);
       }
-      parse_blocks_recurs(blocks, "i");
+
+      if (blocks[i - 1])
+         parse_blocks_recurs(blocks, "i");
    }
    else if (!strcmp(opt, "i")) {
-      uint32_t *direct_blocks = malloc(BLOCK_SIZE);
+      uint32_t direct_blocks[BLOCK_SIZE];
 
       read_data(blocks[12] * 2, 0, direct_blocks, BLOCK_SIZE);
-      for (i = 0; i < 256; i++) {
+      for (i = 0; direct_blocks[i] && i < 256; i++) {
          read_data(direct_blocks[i] * 2, 0, data, BLOCK_SIZE);
          for (j = 0; data[j] && j < BLOCK_SIZE; j++)
             printf("%c", data[j]);
       }
 
-      free(direct_blocks);
-      parse_blocks_recurs(blocks, "I");
+      if (direct_blocks[i - 1])
+         parse_blocks_recurs(blocks, "I");
    }
    else if (!strcmp(opt, "I")) {
-      uint32_t *indirect_blocks = malloc(BLOCK_SIZE);
-      uint32_t *direct_blocks = malloc(BLOCK_SIZE);
+      uint32_t indirect_blocks[BLOCK_SIZE];
+      uint32_t direct_blocks[BLOCK_SIZE];
 
       read_data(blocks[13] * 2, 0, indirect_blocks, BLOCK_SIZE);
       for (i = 0; i < 256; i++) {
@@ -96,14 +99,9 @@ static void parse_blocks_recurs(uint32_t *blocks, char *opt) {
                printf("%c", data[k]);
          }
       }
-
-      free(indirect_blocks);
-      free(direct_blocks);
    }
    else
       fprintf(stderr, "\nError: invalid opt\n");
-
-   free(data);
 }
 
 /*
@@ -285,7 +283,6 @@ void list_entries(ext2_dir_entry *dir) {
    }
 }
 
-// TODO finish this function
 void dump_file(ext2_dir_entry *dir, char *file_dump) {
    int i, j;
    ext2_super_block *sb = malloc(BLOCK_SIZE);
