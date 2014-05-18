@@ -28,10 +28,94 @@ typedef enum bool {
    false, true
 } bool;
 
+/*
+ * Prints a message displaying Usage instructions and exits returning a
+ * value of 1
+ */
 void print_error_msg_and_exit(int exit_value);
+
+/*
+ * Finds the directory specified by |dir| inside ext2 filesystem |image|
+ * and returns the ext2_dir_entry at the beginning of the list
+ */
 ext2_dir_entry *find_dir(FILE *image, char *dir);
+
+/*
+ * List entries inside |dir|
+ */
 void list_entries(ext2_dir_entry *dir);
+
+/*
+ * Dumps contents of |file_dump| given that |file_dump| is a valid file
+ * inside directory |dir|
+ */
 void dump_file(ext2_dir_entry *dir, char *file_dump);
+
+/*
+ * This is called by parse_blocks() for recursion, and is not to be
+ * directly called by the client application. |blocks| points to the beginning
+ * of an inode's i_block field. The inode must of type regular file (0x8000)
+ * inside i_mode. |opt| can be either "d" for direct, "i" for indirect, or
+ * "I" for doubly indirect.
+ */
+static void parse_blocks_recurs(uint32_t *blocks, char *opt) {
+   int i, j, k;
+   char *data = malloc(BLOCK_SIZE);
+
+   if (!strcmp(opt, "d")) {
+      for (i = 0; i < 12; i++) {
+         read_data(blocks[i] * 2, 0, data, BLOCK_SIZE);
+         for (j = 0; data[j] && j < BLOCK_SIZE; j++)
+            printf("%c", data[j]);
+      }
+      parse_blocks_recurs(blocks, "i");
+   }
+   else if (!strcmp(opt, "i")) {
+      uint32_t *direct_blocks = malloc(BLOCK_SIZE);
+
+      read_data(blocks[12] * 2, 0, direct_blocks, BLOCK_SIZE);
+      for (i = 0; i < 256; i++) {
+         read_data(direct_blocks[i] * 2, 0, data, BLOCK_SIZE);
+         for (j = 0; data[j] && j < BLOCK_SIZE; j++)
+            printf("%c", data[j]);
+      }
+
+      free(direct_blocks);
+      parse_blocks_recurs(blocks, "I");
+   }
+   else if (!strcmp(opt, "I")) {
+      uint32_t *indirect_blocks = malloc(BLOCK_SIZE);
+      uint32_t *direct_blocks = malloc(BLOCK_SIZE);
+
+      read_data(blocks[13] * 2, 0, indirect_blocks, BLOCK_SIZE);
+      for (i = 0; i < 256; i++) {
+         read_data(indirect_blocks[i] * 2, 0, direct_blocks, BLOCK_SIZE);
+         for (j = 0; j < 256; j++) {
+            read_data(direct_blocks[j] * 2, 0, data, BLOCK_SIZE);
+            for (k = 0; data[k] && k < BLOCK_SIZE; k++)
+               printf("%c", data[k]);
+         }
+      }
+
+      free(indirect_blocks);
+      free(direct_blocks);
+   }
+   else
+      fprintf(stderr, "\nError: invalid opt\n");
+
+   free(data);
+}
+
+/*
+ * Parse block pointers and dump the data to screen. The intended use of this
+ * function is such that |blocks| points to the beginning of an inode's
+ * i_block field. The inode must be of type regular file (0x8000) inside mode.
+ * This function is called within dump_file() and shouldn't be called directly
+ * inside the client application
+ */
+static void parse_blocks(uint32_t *blocks) {
+   parse_blocks_recurs(blocks, "d");
+}
 
 int main(int argc, char **argv) {
    int c, i;
@@ -231,29 +315,7 @@ void dump_file(ext2_dir_entry *dir, char *file_dump) {
          // data
          if (inode_table[local_inode_index].i_mode >> ISFILE_SHIFT & 1) {
             uint32_t *block = inode_table[local_inode_index].i_block;
-            bool direct = true;
-            bool indirect = true;
-
-            for (i = 0; block[i]; i++) {
-               if (i == 12 && direct) {
-                  read_data(inode_table[local_inode_index].i_block[12] * 2, 0,
-                        block, BLOCK_SIZE);
-                  i = j = 0;
-                  direct = false;
-               }
-               else if (i == 256 && indirect) {
-                  read_data(inode_table[local_inode_index].i_block[13] * 2, 0, block, BLOCK_SIZE);
-                  indirect = false;
-               }
-
-               read_data(block[i] * 2, 0, data, BLOCK_SIZE);
-
-               for (j = 0; data[j] || j < BLOCK_SIZE; j++)
-                  printf("%c", data[j]);
-
-               // fprintf(stderr, "i: %d\n", i);
-            }
-
+            parse_blocks(block);
             data_dumped = true;
          }
       }
