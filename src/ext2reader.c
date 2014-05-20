@@ -14,6 +14,8 @@
 #include <string.h>
 #include "ext2.h"
 
+#define DEBUG 1
+
 #define DEFAULT_SIZE 64
 #define ARG_COUNT_L 4
 #define ARG_COUNT_MIN 2
@@ -36,21 +38,25 @@ void print_error_msg_and_exit(int exit_value);
 
 /*
  * Finds the directory specified by |dir| inside ext2 filesystem |image|
- * and returns the ext2_dir_entry at the beginning of the list. Client is
- * responsible for freeing the dynamically allocated ext2_dir_entry.
+ * and returns a uint32_t pointer pointing to the beginning of the 12
+ * direct block pointers associated to |dir|. Client is responsible for
+ * freeing the dynamically allocated ext2_dir_entry.
  */
-ext2_dir_entry *find_dir(FILE *image, char *dir);
+uint32_t *find_dir(FILE *image, char *dir);
 
 /*
- * List entries inside |dir|
+ * List entries inside some directory whose directory entries are pointed
+ * to by |blocks|. Use find_dir() to get the direct block pointers associated
+ * to a directory to pass them into list_entries()
  */
-void list_entries(ext2_dir_entry *dir);
+void list_entries(uint32_t *blocks);
 
 /*
- * Dumps contents of |file_dump| given that |file_dump| is a valid file
- * inside directory |dir|
+ * Dumps contents of file |file_dump| given that |file_dump| is a valid file
+ * inside directory |dir|. |dir| specifies the 12 direct block pointers
+ * belonging to the inode associated to |dir|
  */
-void dump_file(ext2_dir_entry *dir, char *file_dump);
+void dump_file(uint32_t *dir, char *file_dump);
 
 /*
  * This is called by parse_blocks() for recursion, and is not to be
@@ -122,7 +128,7 @@ int main(int argc, char **argv) {
    char buffer[DEFAULT_SIZE];
    char image[DEFAULT_SIZE];
    char dir[DEFAULT_SIZE];
-   ext2_dir_entry *ext2_dir;
+   uint32_t *blocks;
 
    strcpy(dir, "/");
 
@@ -179,13 +185,13 @@ int main(int argc, char **argv) {
       exit(1);
    }
 
-   ext2_dir = find_dir(fp, dir);
+   blocks = find_dir(fp, dir);
    if (list_entries_flag)
-      list_entries(ext2_dir);
-   else
-      dump_file(ext2_dir, file_dump);
+      list_entries(blocks);
+//   else
+//      dump_file(ext2_dir, file_dump);
 
-   free(ext2_dir);
+   free(blocks);
    fclose(fp);
 
    return 0;
@@ -204,130 +210,162 @@ void print_error_msg_and_exit(int exit_value) {
    exit(1);
 }
 
-ext2_dir_entry *find_dir(FILE *image, char *dir) {
+uint32_t *find_dir(FILE *image, char *dir) {
+   int i;
+   bool found;
+
    // get superblock
    ext2_super_block *sb = malloc(BLOCK_SIZE);
    read_data(2, 0, sb, BLOCK_SIZE);
 
-   // get bgdt, inode table, and root dir entry list
+   // get bgdt, inode table, root dir entry list, and an array of the first
+   // 12 blocks in inode 2
    ext2_group_desc *bgdt = malloc(BLOCK_SIZE);
    ext2_inode *inode_table = malloc(sb->s_inodes_per_group * INODE_SIZE);
    ext2_dir_entry *dentry = malloc(BLOCK_SIZE);
+   uint32_t *blocks = malloc(12 * sizeof(uint32_t));
 
    read_data(2 + TO_BGDT, 0, bgdt, BLOCK_SIZE);
    read_data(bgdt[0].bg_inode_table * 2, 0, inode_table,
          sb->s_inodes_per_group * INODE_SIZE);
-   read_data(inode_table[1].i_block[0] * 2, 0, dentry, BLOCK_SIZE);
 
-   if (strcmp(dir, "/")) {
+   // make a blocks array for inode 2 and start at the first direct block
+   // also set dentry_next to dentry, so dentry can be freed later
+   for (i = 0; inode_table[1].i_block[i] || i < 12; i++)
+      blocks[i] = inode_table[1].i_block[i];
+   blocks[i] = 0;
+   read_data(blocks[i = 0] * 2, 0, dentry, BLOCK_SIZE);
+   ext2_dir_entry *dentry_next = dentry;
+
+   if (strcmp(dir, "/")) { // if not equal to root
       char dir_cpy[DEFAULT_SIZE];
       strcpy(dir_cpy, dir);
       char *dir_search = strtok(dir_cpy, "/");
-      bool found;
 
-      while (dir_search) {
-         ext2_dir_entry *dentry_next = dentry;
+      // search for each tokenized directory until dir_search is found
+      while (dentry_next->inode && dir_search) {
          found = false;
-         while (dentry_next->inode && !found) {
-            char dentry_name[DEFAULT_SIZE];
+         char dentry_name[DEFAULT_SIZE];
 
-            strncpy(dentry_name, dentry_next->name, dentry_next->name_len);
-            dentry_name[dentry_next->name_len] = NULL;
+         // obtain name of dentry as a c-string
+         strncpy(dentry_name, dentry_next->name, dentry_next->name_len);
+         dentry_name[dentry_next->name_len] = NULL;
 
-            // locate entry name and verify if a directory
-            if (!strcmp(dir_search, dentry_name)) {
-               int block_group = (dentry_next->inode - 1)
-                     / sb->s_inodes_per_group;
-               int local_inode_index = (dentry_next->inode - 1)
-                     % sb->s_inodes_per_group;
+         // locate entry name match
+         if (!strcmp(dir_search, dentry_name)) {
+            int block_group = (dentry_next->inode - 1) / sb->s_inodes_per_group;
+            int local_inode_index = (dentry_next->inode - 1)
+                  % sb->s_inodes_per_group;
 
-               read_data(bgdt[block_group].bg_inode_table * 2, 0, inode_table,
-                     sb->s_inodes_per_group * INODE_SIZE);
+            read_data(bgdt[block_group].bg_inode_table * 2, 0, inode_table,
+                  sb->s_inodes_per_group * INODE_SIZE);
 
-               if (inode_table[local_inode_index].i_mode >> ISDIR_SHIFT & 1) {
-                  read_data(inode_table[local_inode_index].i_block[0] * 2, 0,
-                        dentry, BLOCK_SIZE);
-                  found = true;
-               }
+            // if a matched entry name is a directory
+            if (inode_table[local_inode_index].i_mode >> ISDIR_SHIFT & 1) {
+               for (i = 0; inode_table[local_inode_index].i_block[i] || i < 12;
+                     i++)
+                  blocks[i] = inode_table[local_inode_index].i_block[i];
+               blocks[i] = 0;
+               i = 0;
+
+               read_data(blocks[0] * 2, 0, dentry, BLOCK_SIZE);
+               dentry_next = dentry;
+
+               dir_search = strtok(NULL, "/");
+               found = true;
+               continue;
             }
-
-            dentry_next = ((char *) dentry_next) + dentry_next->rec_len;
          }
 
-         if (!found) {
-            fprintf(stderr, "\nError: %s is not a directory. Exiting...\n",
-                  dir);
-            exit(1);
+         dentry_next = ((char *) dentry_next) + dentry_next->rec_len;
+         if (!dentry_next->inode) {
+            read_data(blocks[++i] * 2, 0, dentry, BLOCK_SIZE);
+            dentry_next = dentry;
          }
+      }
 
-         dir_search = strtok(NULL, "/");
+      if (!found) {
+         fprintf(stderr, "\nError: %s is not a directory. Exiting...\n", dir);
+         exit(1);
       }
    }
 
    // teardown
+   free(dentry);
    free(inode_table);
    free(bgdt);
    free(sb);
-   return dentry;
+   return blocks;
 }
 
-void list_entries(ext2_dir_entry *dir) {
-   while (dir->inode) {
+void list_entries(uint32_t *blocks) {
+   int i = 0;
+   ext2_dir_entry *dir = malloc(BLOCK_SIZE);
+   read_data(blocks[i] * 2, 0, dir, BLOCK_SIZE);
+   ext2_dir_entry *dir_next = dir;
+
+   while (dir_next->inode) {
       int c_idx;
 
-      for (c_idx = 0; c_idx < dir->name_len; c_idx++)
-         printf("%c", dir->name[c_idx]);
+      for (c_idx = 0; c_idx < dir_next->name_len; c_idx++)
+         printf("%c", dir_next->name[c_idx]);
       printf("\n");
 
-      dir = ((char *) dir) + dir->rec_len;
-   }
-}
-
-void dump_file(ext2_dir_entry *dir, char *file_dump) {
-   int i, j;
-   ext2_super_block *sb = malloc(BLOCK_SIZE);
-   ext2_group_desc *bgdt = malloc(BLOCK_SIZE);
-   ext2_inode *inode_table = malloc(sb->s_inodes_per_group * INODE_SIZE);
-   char *data = malloc(BLOCK_SIZE);
-   bool data_dumped = false;
-
-   read_data(2, 0, sb, BLOCK_SIZE);
-   read_data(2 + TO_BGDT, 0, bgdt, BLOCK_SIZE);
-
-   while (dir->inode && !data_dumped) {
-      char dentry_name[DEFAULT_SIZE];
-
-      strncpy(dentry_name, dir->name, dir->name_len);
-      dentry_name[dir->name_len] = NULL;
-
-      // locate entry name and verify if a file
-      if (!strcmp(file_dump, dentry_name)) {
-         int block_group = (dir->inode - 1) / sb->s_inodes_per_group;
-         int local_inode_index = (dir->inode - 1) % sb->s_inodes_per_group;
-
-         read_data(bgdt[block_group].bg_inode_table * 2, 0, inode_table,
-               sb->s_inodes_per_group * INODE_SIZE);
-
-         // if a file, traverse through all in-use block pointers to dump
-         // data
-         if (inode_table[local_inode_index].i_mode >> ISFILE_SHIFT & 1) {
-            uint32_t *block = inode_table[local_inode_index].i_block;
-            parse_blocks(block);
-            data_dumped = true;
-         }
+      dir_next = ((char *) dir_next) + dir_next->rec_len;
+      if (!dir_next->inode) {
+         read_data(blocks[++i] * 2, 0, dir, BLOCK_SIZE);
+         dir_next = dir;
       }
-
-      dir = ((char *) dir) + dir->rec_len;
    }
 
-   if (!data_dumped) {
-      fprintf(stderr, "\nError: file %s could not be found. Exiting...\n",
-            file_dump);
-      exit(1);
-   }
-
-   free(sb);
-   free(bgdt);
-   free(inode_table);
-   free(data);
+   free(dir);
 }
+
+/*void dump_file(ext2_dir_entry *dir, char *file_dump) {
+ int i, j;
+ ext2_super_block *sb = malloc(BLOCK_SIZE);
+ ext2_group_desc *bgdt = malloc(BLOCK_SIZE);
+ ext2_inode *inode_table = malloc(sb->s_inodes_per_group * INODE_SIZE);
+ char *data = malloc(BLOCK_SIZE);
+ bool data_dumped = false;
+
+ read_data(2, 0, sb, BLOCK_SIZE);
+ read_data(2 + TO_BGDT, 0, bgdt, BLOCK_SIZE);
+
+ while (dir->inode && !data_dumped) {
+ char dentry_name[DEFAULT_SIZE];
+
+ strncpy(dentry_name, dir->name, dir->name_len);
+ dentry_name[dir->name_len] = NULL;
+
+ // locate entry name and verify if a file
+ if (!strcmp(file_dump, dentry_name)) {
+ int block_group = (dir->inode - 1) / sb->s_inodes_per_group;
+ int local_inode_index = (dir->inode - 1) % sb->s_inodes_per_group;
+
+ read_data(bgdt[block_group].bg_inode_table * 2, 0, inode_table,
+ sb->s_inodes_per_group * INODE_SIZE);
+
+ // if a file, traverse through all in-use block pointers to dump
+ // data
+ if (inode_table[local_inode_index].i_mode >> ISFILE_SHIFT & 1) {
+ uint32_t *block = inode_table[local_inode_index].i_block;
+ parse_blocks(block);
+ data_dumped = true;
+ }
+ }
+
+ dir = ((char *) dir) + dir->rec_len;
+ }
+
+ if (!data_dumped) {
+ fprintf(stderr, "\nError: file %s could not be found. Exiting...\n",
+ file_dump);
+ exit(1);
+ }
+
+ free(sb);
+ free(bgdt);
+ free(inode_table);
+ free(data);
+ }*/
