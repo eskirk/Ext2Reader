@@ -14,7 +14,7 @@
 #include <string.h>
 #include "ext2.h"
 
-#define DEBUG 0
+#define DEBUG 1
 
 #define DEFAULT_SIZE 64
 #define ARG_COUNT_L 4
@@ -231,8 +231,8 @@ uint32_t *find_dir(FILE *image, char *dir) {
    read_data(bgdt[0].bg_inode_table * 2, 0, inode_table,
          sb->s_inodes_per_group * INODE_SIZE);
 
-   // make a blocks array for inode 2 and start at the first direct block
-   // also set dentry_next to dentry, so dentry can be freed later
+   // copy all the direct block pointers to a blocks array for root
+   // inode (inode 2)
    for (i = 0; inode_table[1].i_block[i] && i < 12; i++)
       blocks[i] = inode_table[1].i_block[i];
    blocks[i] = 0;
@@ -264,11 +264,17 @@ uint32_t *find_dir(FILE *image, char *dir) {
             int local_inode_index = (dentry_next->inode - 1)
                   % sb->s_inodes_per_group;
 
+
+#if DEBUG
+            printf("block_group: %d\n", block_group);
+            printf("inode: %d\n", dentry_next->inode);
+#endif
+
             read_data(bgdt[block_group].bg_inode_table * 2, 0, inode_table,
                   sb->s_inodes_per_group * INODE_SIZE);
 
 #if DEBUG
-            printf("mode: 0x%04X\n", inode_table[local_inode_index].i_mode);
+            printf("mode: 0x%04X\n\n", inode_table[local_inode_index].i_mode);
 #endif
 
             // if a matched entry name is a directory
@@ -289,6 +295,7 @@ uint32_t *find_dir(FILE *image, char *dir) {
             }
          }
 
+         // go to the next directory entry
          dentry_next = ((char *) dentry_next) + dentry_next->rec_len;
          if ((char *) dentry_next - (char *) dentry >= BLOCK_SIZE) {
             read_data(blocks[++i] * 2, 0, dentry, BLOCK_SIZE);

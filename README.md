@@ -34,4 +34,7 @@ filesystem is mounted, that entry is seen as a directory. The logic
 in find_dir() doesn't seem to be completely off, since it is able to
 match the name and the correct mode in "most" cases.
 
+##TODO##
 
+1. Format the output and include type of file and size
+2. Alphabetical ordering of listing
