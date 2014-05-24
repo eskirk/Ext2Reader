@@ -252,36 +252,16 @@ uint32_t *find_dir(FILE *image, char *dir) {
          strncpy(dentry_name, dentry_next->name, dentry_next->name_len);
          dentry_name[dentry_next->name_len] = NULL;
 
-#if DEBUG
-         printf("dentry_name: %s\n", dentry_name);
-         printf("dir_search: %s\n", dir_search);
-#endif
-
          // locate entry name match
          if (!strcmp(dir_search, dentry_name)) {
             int block_group = (dentry_next->inode - 1) / sb->s_inodes_per_group;
             int local_inode_index = (dentry_next->inode - 1)
                   % sb->s_inodes_per_group;
 
-#if DEBUG
-            printf("\n\n");
-            printf("block_group: %d\n", block_group);
-            printf("inode: %d\n", dentry_next->inode);
-            printf("local_inode_index: %d\n", local_inode_index);
-#endif
-
             int sectors = local_inode_index * INODE_SIZE / 512;
             int offset = local_inode_index * INODE_SIZE % 512;
             read_data(bgdt[block_group].bg_inode_table * 2 + sectors, offset,
                   ino, INODE_SIZE);
-
-#if DEBUG
-            printf("block_group: %d\n", block_group);
-            printf("inode: %d\n", dentry_next->inode);
-            printf("inodes per group: %d\n", sb->s_inodes_per_group);
-            printf("mode: 0x%04X\n", ino->i_mode);
-            printf("\n\n");
-#endif
 
             // if a matched entry name is a directory
             if (ino->i_mode >> ISDIR_SHIFT & 1) {
@@ -314,7 +294,7 @@ uint32_t *find_dir(FILE *image, char *dir) {
       }
    }
 
-// teardown
+   // teardown
    free(dentry);
    free(ino);
    free(bgdt);
@@ -408,8 +388,8 @@ void dump_file(uint32_t *blocks, char *file_dump) {
 
          int sectors = local_inode_index * INODE_SIZE / 512;
          int offset = local_inode_index * INODE_SIZE % 512;
-         read_data(bgdt[block_group].bg_inode_table * 2 + sectors, offset,
-                           ino, INODE_SIZE);
+         read_data(bgdt[block_group].bg_inode_table * 2 + sectors, offset, ino,
+         INODE_SIZE);
 
          // if a file, traverse through all in-use block pointers to dump
          // data
