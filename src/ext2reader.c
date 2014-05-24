@@ -14,7 +14,7 @@
 #include <string.h>
 #include "ext2.h"
 
-#define DEBUG 1
+#define DEBUG 0
 
 #define DEFAULT_SIZE 64
 #define ARG_COUNT_L 4
@@ -220,21 +220,20 @@ uint32_t *find_dir(FILE *image, char *dir) {
    ext2_super_block *sb = malloc(BLOCK_SIZE);
    read_data(2, 0, sb, BLOCK_SIZE);
 
-   // get bgdt, inode table, root dir entry list, and an array of the first
+   // get bgdt, root dir entry list, and an array of the first
    // 12 blocks in inode 2
    ext2_group_desc *bgdt = malloc(BLOCK_SIZE);
-   ext2_inode *inode_table = malloc(sb->s_inodes_per_group * INODE_SIZE);
+   ext2_inode *ino = malloc(INODE_SIZE);
    ext2_dir_entry *dentry = malloc(BLOCK_SIZE);
    uint32_t *blocks = malloc(12 * sizeof(uint32_t));
 
    read_data(2 + TO_BGDT, 0, bgdt, BLOCK_SIZE);
-   read_data(bgdt[0].bg_inode_table * 2, 0, inode_table,
-         sb->s_inodes_per_group * INODE_SIZE);
+   read_data(bgdt[0].bg_inode_table * 2, INODE_SIZE, ino, INODE_SIZE);
 
    // copy all the direct block pointers to a blocks array for root
    // inode (inode 2)
-   for (i = 0; inode_table[1].i_block[i] && i < 12; i++)
-      blocks[i] = inode_table[1].i_block[i];
+   for (i = 0; ino->i_block[i] && i < 12; i++)
+      blocks[i] = ino->i_block[i];
    blocks[i] = 0;
    read_data(blocks[i = 0] * 2, 0, dentry, BLOCK_SIZE);
    ext2_dir_entry *dentry_next = dentry;
@@ -264,24 +263,30 @@ uint32_t *find_dir(FILE *image, char *dir) {
             int local_inode_index = (dentry_next->inode - 1)
                   % sb->s_inodes_per_group;
 
+#if DEBUG
+            printf("\n\n");
+            printf("block_group: %d\n", block_group);
+            printf("inode: %d\n", dentry_next->inode);
+            printf("local_inode_index: %d\n", local_inode_index);
+#endif
+
+            int sectors = local_inode_index * INODE_SIZE / 512;
+            int offset = local_inode_index * INODE_SIZE % 512;
+            read_data(bgdt[block_group].bg_inode_table * 2 + sectors, offset,
+                  ino, INODE_SIZE);
 
 #if DEBUG
             printf("block_group: %d\n", block_group);
             printf("inode: %d\n", dentry_next->inode);
-#endif
-
-            read_data(bgdt[block_group].bg_inode_table * 2, 0, inode_table,
-                  sb->s_inodes_per_group * INODE_SIZE);
-
-#if DEBUG
-            printf("mode: 0x%04X\n\n", inode_table[local_inode_index].i_mode);
+            printf("inodes per group: %d\n", sb->s_inodes_per_group);
+            printf("mode: 0x%04X\n", ino->i_mode);
+            printf("\n\n");
 #endif
 
             // if a matched entry name is a directory
-            if (inode_table[local_inode_index].i_mode >> ISDIR_SHIFT & 1) {
-               for (i = 0; inode_table[local_inode_index].i_block[i] && i < 12;
-                     i++)
-                  blocks[i] = inode_table[local_inode_index].i_block[i];
+            if (ino->i_mode >> ISDIR_SHIFT & 1) {
+               for (i = 0; ino->i_block[i] && i < 12; i++)
+                  blocks[i] = ino->i_block[i];
                blocks[i] = 0;
                i = 0;
 
@@ -309,26 +314,58 @@ uint32_t *find_dir(FILE *image, char *dir) {
       }
    }
 
-   // teardown
+// teardown
    free(dentry);
-   free(inode_table);
+   free(ino);
    free(bgdt);
    free(sb);
    return blocks;
 }
 
 void list_entries(uint32_t *blocks) {
-   int i = 0;
+   int i = 0, size;
+   int sectors, offset, block_group, local_idx;
+   char name[DEFAULT_SIZE];
+   char type;
+
+   // get superblock
+   ext2_super_block *sb = malloc(BLOCK_SIZE);
+   read_data(2, 0, sb, BLOCK_SIZE);
+
+   // get bgdt and allocate space for an inode
+   ext2_group_desc *bgdt = malloc(BLOCK_SIZE);
+   read_data(4, 0, bgdt, BLOCK_SIZE);
+   ext2_inode *ino = malloc(INODE_SIZE);
+
+   // set dir and dir_next directory entries
    ext2_dir_entry *dir = malloc(BLOCK_SIZE);
    read_data(blocks[i] * 2, 0, dir, BLOCK_SIZE);
    ext2_dir_entry *dir_next = dir;
 
+   printf("%20s %20s %20s\n\n", "filename", "type", "size");
    while (dir_next->inode) {
-      int c_idx;
+      // turn directory entry name into c-string
+      strncpy(name, dir_next->name, dir_next->name_len);
+      name[dir_next->name_len] = NULL;
 
-      for (c_idx = 0; c_idx < dir_next->name_len; c_idx++)
-         printf("%c", dir_next->name[c_idx]);
-      printf("\n");
+      // get the associating inode
+      block_group = (dir_next->inode - 1) / sb->s_inodes_per_group;
+      local_idx = (dir_next->inode - 1) % sb->s_inodes_per_group;
+      sectors = local_idx * INODE_SIZE / 512;
+      offset = local_idx * INODE_SIZE % 512;
+
+      read_data(bgdt[block_group].bg_inode_table * 2 + sectors, offset, ino,
+      INODE_SIZE);
+
+      if (ino->i_mode >> ISDIR_SHIFT & 1)
+         type = 'd';
+      else if (ino->i_mode >> ISFILE_SHIFT & 1)
+         type = 'f';
+      else
+         type = 'u';
+      size = ino->i_size;
+
+      printf("%20s %20c %20d\n", name, type, size);
 
       dir_next = ((char *) dir_next) + dir_next->rec_len;
       if ((char *) dir_next - (char *) dir >= BLOCK_SIZE) {
@@ -338,13 +375,16 @@ void list_entries(uint32_t *blocks) {
    }
 
    free(dir);
+   free(ino);
+   free(bgdt);
+   free(sb);
 }
 
 void dump_file(uint32_t *blocks, char *file_dump) {
    int i = 0;
    ext2_super_block *sb = malloc(BLOCK_SIZE);
    ext2_group_desc *bgdt = malloc(BLOCK_SIZE);
-   ext2_inode *inode_table = malloc(sb->s_inodes_per_group * INODE_SIZE);
+   ext2_inode *ino = malloc(INODE_SIZE);
    ext2_dir_entry *dentry = malloc(BLOCK_SIZE);
    bool data_dumped = false;
 
@@ -366,13 +406,15 @@ void dump_file(uint32_t *blocks, char *file_dump) {
          int local_inode_index = (dentry_next->inode - 1)
                % sb->s_inodes_per_group;
 
-         read_data(bgdt[block_group].bg_inode_table * 2, 0, inode_table,
-               sb->s_inodes_per_group * INODE_SIZE);
+         int sectors = local_inode_index * INODE_SIZE / 512;
+         int offset = local_inode_index * INODE_SIZE % 512;
+         read_data(bgdt[block_group].bg_inode_table * 2 + sectors, offset,
+                           ino, INODE_SIZE);
 
          // if a file, traverse through all in-use block pointers to dump
          // data
-         if (inode_table[local_inode_index].i_mode >> ISFILE_SHIFT & 1) {
-            uint32_t *block = inode_table[local_inode_index].i_block;
+         if (ino->i_mode >> ISFILE_SHIFT & 1) {
+            uint32_t *block = ino->i_block;
             parse_blocks(block);
             data_dumped = true;
             continue;
@@ -394,6 +436,6 @@ void dump_file(uint32_t *blocks, char *file_dump) {
 
    free(sb);
    free(bgdt);
-   free(inode_table);
+   free(ino);
    free(dentry);
 }
