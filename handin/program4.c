@@ -1,11 +1,64 @@
 /*
- * ext2reader.c
- *
- *  Created on: Jun 3, 2014
- *      Author: knavero
+ ============================================================================
+ Name        : ext2Reader.c
+ Author      : Kevin Navero
+ Version     :
+ Copyright   : 
+ Description : ext2 reader, Program 4
+ ============================================================================
  */
 
-#include "ext2reader.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include "ext2.h"
+
+#define DEBUG 0
+
+#define DEFAULT_SIZE 64
+#define ARG_COUNT_L 4
+#define ARG_COUNT_MIN 2
+#define ARG_COUNT_MAX 3
+#define BLOCK_SIZE 1024
+#define INODE_SIZE sizeof(ext2_inode)
+#define TO_BGDT 2
+#define ISDIR_SHIFT 14
+#define ISFILE_SHIFT 15
+
+typedef enum bool {
+   false, true
+} bool;
+
+/*
+ * Prints a message displaying Usage instructions and exits returning a
+ * value of 1
+ */
+void print_error_msg_and_exit(int exit_value);
+
+/*
+ * Finds the directory specified by |dir| inside ext2 filesystem |image|
+ * and returns a uint32_t pointer pointing to the beginning of the 12
+ * direct block pointers associated to the |dir| inode. Client is responsible
+ * for freeing the dynamically allocated ext2_dir_entry.
+ */
+uint32_t *find_dir(FILE *image, char *dir);
+
+/*
+ * List entries inside some directory whose directory entries are pointed
+ * to by |blocks|. |blocks| associates to a directory inode's 12 direct
+ * pointers. Use find_dir() to get the direct block pointers associated to a
+ * directory inode then pass them into list_entries() or dump_file()
+ */
+void list_entries(uint32_t *blocks);
+
+/*
+ * Dumps contents of file |file_dump| given that |file_dump| is a valid file
+ * inside the directory associated to |blocks|. |blocks| is obtained using
+ * find_dir() and specifies the 12 direct block pointers belonging to the
+ * inode found using find_dir()
+ */
+void dump_file(uint32_t *blocks, char *file_dump);
 
 /*
  * This is called by parse_blocks() for recursion, and is not to be
@@ -70,6 +123,82 @@ static void parse_blocks(uint32_t *blocks) {
    parse_blocks_recurs(blocks, "d");
 }
 
+int main(int argc, char **argv) {
+   int c, i;
+   bool list_entries_flag = true;
+   char file_dump[DEFAULT_SIZE];
+   char buffer[DEFAULT_SIZE];
+   char image[DEFAULT_SIZE];
+   char dir[DEFAULT_SIZE];
+   uint32_t *dir_blocks;
+
+   strcpy(dir, "/");
+
+   if ((c = getopt(argc, argv, "l:")) != -1) {
+      switch (c) {
+      case 'l':
+         if (argc != ARG_COUNT_L)
+            print_error_msg_and_exit(1);
+
+         strcpy(image, optarg);
+         strcpy(file_dump, argv[argc - 1]);
+         strcpy(dir, file_dump);
+
+         // manipulate dir to the last directory right before the filename
+         for (i = strlen(dir) - 1; dir[i] != '/' && i > 0; i--)
+            ;
+         dir[i] = NULL;
+
+         if (!i)
+            strcpy(dir, "/");
+         else if (dir[0] != '/') {
+            strcpy(buffer, "/");
+            strcat(buffer, dir);
+            strcpy(dir, buffer);
+         }
+
+         // manipulate file_dump to just the filename
+         strcpy(buffer, file_dump);
+         char *pch = strtok(buffer, "/");
+         while (pch) {
+            strcpy(file_dump, pch);
+            pch = strtok(NULL, "/");
+         }
+
+         list_entries_flag = false;
+         break;
+      default:
+         print_error_msg_and_exit(1);
+      }
+   }
+   else {
+      if (argc < ARG_COUNT_MIN || argc > ARG_COUNT_MAX)
+         print_error_msg_and_exit(1);
+
+      strcpy(image, *++argv);
+
+      if (*++argv)
+         strcpy(dir, *argv);
+   }
+
+   fp = fopen(image, "r");
+   if (!fp) {
+      fprintf(stderr, "\nError: Could not find file %s\n", image);
+      exit(1);
+   }
+
+   dir_blocks = find_dir(fp, dir);
+   if (list_entries_flag)
+      list_entries(dir_blocks);
+   else
+      dump_file(dir_blocks, file_dump);
+
+   free(dir_blocks);
+   fclose(fp);
+
+   return 0;
+}
+
 void print_error_msg_and_exit(int exit_value) {
    fprintf(stderr,
          "\nUsage: \n"
@@ -80,7 +209,7 @@ void print_error_msg_and_exit(int exit_value) {
                "     -l    print to the screen the contents of <file_to_dump.txt>\n"
                "\nNotes:\n"
                "     All paths not prefixed with '/' are relative to the root directory\n");
-   exit(exit_value);
+   exit(1);
 }
 
 uint32_t *find_dir(FILE *image, char *dir) {
